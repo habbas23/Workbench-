@@ -1,0 +1,41 @@
+from snakebids import generate_inputs
+
+configfile: workflow.source_path("../config/snakebids.yml")
+
+inputs = generate_inputs(bids_dir="", pybids_inputs=config["pybids_inputs"])
+
+valid_inputs = inputs["bold"].filter(**inputs["midthickness"].entities["subject",])
+
+rule volume_to_surface_mapping:
+#This command will map the denoised volumetric data to the cortical surface
+    input:
+        bold = "/home/hhabbas/tle3T_phase2/postproc3T_dev/denoise-fmri_snakebids-0-7-2/results/sub-{subject}/func/sub-{subject}_task-{task}_run-{run}_space-T1w_desc-denoised_fwhm-{fwhm}_confounds-{confounds}_bold.nii.gz", 
+        midthickness = "/home/hhabbas/tle3T_phase2/postproc3T_dev/hcp_mmp_to-native/results/hcp_mmp/sub-{subject}/sub-{subject}_hemi-{hemi}_space-native_midthickness.surf.gii",
+        white = "/home/hhabbas/tle3T_phase2/postproc3T_dev/hcp_mmp_to-native/results/hcp_mmp/sub-{subject}/sub-{subject}_hemi-{hemi}_space-native_white.surf.gii",
+        pial = "/home/hhabbas/tle3T_phase2/postproc3T_dev/hcp_mmp_to-native/results/hcp_mmp/sub-{subject}/sub-{subject}_hemi-{hemi}_space-native_pial.surf.gii"
+    output:
+        "/home/hhabbas/tle3t_phase2/postproc3T_dev/workbench_surfaces/native_space_surfaces/sub-{subject}_hemi-{hemi}_task-{task}_run-{run}_space-native_desc-denoised_fwhm-{fwhm}_confounds-{confounds}_bold.func.gii"
+    shell:
+        "wb_command -volume-to-surface-mapping {input.bold} {input.midthickness} {output} -ribbon-constrained {input.white} {input.pial}"
+
+rule all:
+    input:
+        expand(valid_inputs.expand(rules.volume_to_surface_mapping.output, allow_missing=True), hemi=["L", "R"])
+    
+
+rule metric_resample:
+#This command will resample the data from the step above from native space to 32k fsLR space (necessary for surface parcellations)
+    input:
+        volume_to_surface_mapping_output = rules.volume_to_surface_mapping.output,
+        current_sphere = "/home/hhabbas/tle3T_phase2/postproc3T_dev/hcp_mmp_to-native/results/hcp_mmp/sub-{subject}/sub-{subject}_hemi-{hemi}_space-fsaverage_sphere.reg.surf.gii", 
+        new_sphere = "/home/hhabbas/tle3T_phase2/postproc3T_dev/hcp_mmp_to-native/resources/standard_mesh_atlases/resample_fsaverage/fs_LR-deformed_to-fsaverage.{hemi}.sphere.32k_fs_LR.surf.gii"
+    output:
+        "/home/hhabbas/tle3t_phase2/postproc3T_dev/workbench_surfaces/32k_space_surfaces/sub-{subject}_hemi-{hemi}_task-{task}_run-{run}_space-fsLR_den-32k_desc-denoised_fwhm-{fwhm}_confounds-{confounds}_bold.func.gii"
+    shell:
+        "wb_command -metric-resample {input.volume_to_surface_mapping_output} {input.current_sphere} {input.new_sphere} BARYCENTRIC {output}"
+
+rule all_resample:
+    input:
+        resampled = expand(valid_inputs.expand(rules.metric_resample.output, allow_missing=True), hemi=["L", "R"])
+    default_target: True
+
